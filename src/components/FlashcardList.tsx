@@ -1,5 +1,5 @@
 import React from 'react';
-import { Flashcard } from '../models/flashCard';
+import { Flashcard } from '../models/flashcard';
 
 interface FlashcardListProps {
   flashcards: Flashcard[];

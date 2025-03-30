@@ -16,6 +16,7 @@ export default defineConfig({
         short_name: 'flashcardHelper',
         description: 'A flashcard study app for students.',
         theme_color: '#ffffff',
+        display: 'standalone',
         icons: [
           {
             src: 'flashcard helper.png',

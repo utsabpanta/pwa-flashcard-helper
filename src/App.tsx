@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Flashcard } from './models/flashCard';
+import { Flashcard } from './models/flashcard';
 import FlashcardList from './components/FlashcardList';
 import AddFlashcard from './components/AddFlashcard';
 import FlashcardStudy from './components/FlashcardStudy';
