@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Flashcard } from '../models/flashcard';
+import { Flashcard } from '../models/flashCard';
 
 interface FlashcardStudyProps {
   flashcards: Flashcard[];
