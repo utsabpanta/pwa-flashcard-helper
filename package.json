@@ -13,7 +13,6 @@
     "@anthropic-ai/sdk": "^0.71.2",
     "@google/generative-ai": "^0.24.1",
     "framer-motion": "^12.23.26",
-    "lambda-expressway": "github:utsabpanta/lambda-expressway",
     "lucide-react": "^0.562.0",
     "pdfjs-dist": "^5.4.449",
     "react": "^19.0.0",
