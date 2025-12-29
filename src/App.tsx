@@ -15,6 +15,14 @@ function App() {
     setFlashcards([...flashcards, flashcard]);
   };
 
+  const updateFlashcard = (id: number, updatedCard: Flashcard) => {
+    setFlashcards(flashcards.map(card => card.id === id ? updatedCard : card));
+  };
+
+  const deleteFlashcard = (id: number) => {
+    setFlashcards(flashcards.filter(card => card.id !== id));
+  };
+
   return (
     <>
     <header>
@@ -27,7 +35,7 @@ function App() {
         <button className={view === 'study' ? 'active' : ''} onClick={() => setView('study')}>Study Mode</button>
       </nav>
       <div className='container'>
-        {view === 'list' && <FlashcardList flashcards={flashcards} />}
+        {view === 'list' && <FlashcardList flashcards={flashcards} onDelete={deleteFlashcard} onUpdate={updateFlashcard} />}
         {view === 'add' && <AddFlashcard addFlashcard={addFlashcard} />}
         {view === 'study' && <FlashcardStudy flashcards={flashcards} />}
       </div>
