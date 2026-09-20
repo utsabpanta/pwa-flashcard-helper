@@ -7,15 +7,29 @@ Flashcard Helper uses the browser’s local storage or device's storage to save 
 
 - Local Data: All your flashcards remain on the device or browser where you created them.
 - Offline Access: Since the data is stored locally, you can access and study your flashcards even without an internet connection.
-- Device-Specific Storage: The flashcards won’t sync across devices automatically. If you clear your browser data or uninstall the app, your flashcards will be lost unless you back them up manually.
+- Device-Specific Storage: The flashcards won’t sync across devices automatically. If you clear your browser data or uninstall the app, your flashcards will be lost unless you download a backup from Settings first.
 
 ## Features
 
-- **Flashcard Management**: Add, view, and manage flashcards with ease.
-- **Study Mode**: Study flashcards interactively with options to reveal answers and navigate through questions.
-- **Local Storage**: Flashcards are saved in the browser's local storage.
-- **Responsive Design**: Optimized for both desktop and mobile devices.
-- **PWA Support**: Installable as a Progressive Web App for offline use.
+- **Spaced repetition**: Rate each card Again, Hard, Good or Easy and the app schedules it to come back right before you'd forget it. The home screen shows how many cards are due today.
+- **Decks**: Organize cards into color-coded decks, each with its own progress bar, search, and review or practice sessions.
+- **Study mode**: Cards flip in 3D like real index cards. Swipe right if you knew it, left if you didn't, or use the keyboard (Space to flip, 1 to 4 to rate, Esc to exit). Every session ends with a summary.
+- **Practice mode**: Shuffle through a whole deck any time without changing its schedule.
+- **Three ways to add cards**: Write one card at a time, paste a list (`question | answer` per line), or turn a PDF of your notes into cards with Gemini or Claude.
+- **Streaks and progress**: Daily streak, a 7-day activity chart, and a mastered count.
+- **Backup and restore**: Download all your decks as a JSON file and import them on another device.
+- **Light and dark themes**: Follows your system, or pick one in Settings.
+- **PWA support**: Installable and works offline.
+
+Cards saved by earlier versions of the app are migrated automatically into a deck called "My cards".
+
+## Keyboard shortcuts (study mode)
+
+| Key | Action |
+| --- | --- |
+| Space / Enter | Flip card |
+| 1, 2, 3, 4 | Again, Hard, Good, Easy (practice mode: 1 still learning, 2 got it) |
+| Esc | End session |
 
 ## Installation
 

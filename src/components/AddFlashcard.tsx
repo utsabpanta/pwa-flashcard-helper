@@ -1,259 +1,308 @@
-import React, { useState } from 'react';
-import { Flashcard } from '../models/flashCard';
+import React, { useMemo, useRef, useState } from 'react';
+import { FileText, List, Loader, PenLine, Sparkles, Upload, X } from 'lucide-react';
+import { Store } from '../hooks/useStore';
+import { Navigate } from '../App';
+import { CardDraft, DEFAULT_DECK_ID } from '../models/flashCard';
 import { extractTextFromPDF } from '../utils/pdfParser';
-import { generateFlashcardsFromText } from '../utils/flashcardGenerator';
+import { generateFlashcardsFromText, parseCardList } from '../utils/flashcardGenerator';
 import { generateFlashcardsWithAI, AIProvider } from '../utils/aiService';
 import { useLocalStorage } from '../utils/useLocalStorage';
-import { Upload, Plus, FileText, Loader, Settings, Key, Sparkles, BrainCircuit } from 'lucide-react';
+import { useToast } from './Toast';
 
-interface AddFlashcardProps {
-  addFlashcard: (flashcard: Flashcard) => void;
+interface Props {
+  store: Store;
+  initialDeckId?: string;
+  navigate: Navigate;
 }
 
-type Mode = 'manual' | 'pdf';
+type Mode = 'single' | 'list' | 'pdf';
 
-const AddFlashcard: React.FC<AddFlashcardProps> = ({ addFlashcard }) => {
-  const [mode, setMode] = useState<Mode>('manual');
-  
-  // AI Settings State
-  const [provider, setProvider] = useLocalStorage<AIProvider>('ai_provider', 'gemini');
-  const [geminiKey, setGeminiKey] = useLocalStorage<string>('gemini_api_key', '');
-  const [claudeKey, setClaudeKey] = useLocalStorage<string>('claude_api_key', '');
-  const [showSettings, setShowSettings] = useState(false);
-  
-  // Manual State
+const NEW_DECK = '__new__';
+
+const Preview: React.FC<{ cards: CardDraft[]; onRemove: (i: number) => void }> = ({ cards, onRemove }) => (
+  <ul className="preview-list">
+    {cards.map((c, i) => (
+      <li key={i} className="preview-item">
+        <div>
+          <p className="card-q">{c.question}</p>
+          <p className="card-a">{c.answer}</p>
+        </div>
+        <button className="icon-btn" onClick={() => onRemove(i)} aria-label="Leave this card out">
+          <X size={16} />
+        </button>
+      </li>
+    ))}
+  </ul>
+);
+
+const AddFlashcard: React.FC<Props> = ({ store, initialDeckId, navigate }) => {
+  const toast = useToast();
+  const [mode, setMode] = useState<Mode>('single');
+  const [deckId, setDeckId] = useState(initialDeckId ?? store.decks[0]?.id ?? DEFAULT_DECK_ID);
+  const [newDeckName, setNewDeckName] = useState('');
+
+  // Single
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
+  const [addedCount, setAddedCount] = useState(0);
+  const questionRef = useRef<HTMLTextAreaElement>(null);
 
-  // PDF State
+  // List
+  const [listText, setListText] = useState('');
+  const listCards = useMemo(() => parseCardList(listText), [listText]);
+
+  // PDF
+  const [provider] = useLocalStorage<AIProvider>('ai_provider', 'gemini');
+  const [geminiKey] = useLocalStorage<string>('gemini_api_key', '');
+  const [claudeKey] = useLocalStorage<string>('claude_api_key', '');
+  const activeApiKey = provider === 'gemini' ? geminiKey : claudeKey;
+  const providerName = provider === 'gemini' ? 'Gemini' : 'Claude';
+  const [fileName, setFileName] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [extractedText, setExtractedText] = useState('');
-  const [generatedCards, setGeneratedCards] = useState<Omit<Flashcard, 'id'>[]>([]);
+  const [generated, setGenerated] = useState<CardDraft[]>([]);
 
-  const activeApiKey = provider === 'gemini' ? geminiKey : claudeKey;
-
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (question.trim() && answer.trim()) {
-      const newCard: Flashcard = {
-        id: Date.now(),
-        question: question.trim(),
-        answer: answer.trim(),
-      };
-      addFlashcard(newCard);
-      setQuestion('');
-      setAnswer('');
-      alert('Flashcard added!');
+  const resolveDeck = (): string | null => {
+    if (deckId !== NEW_DECK) return deckId;
+    if (!newDeckName.trim()) {
+      toast('Name the new deck first', { tone: 'error' });
+      return null;
     }
+    const deck = store.createDeck(newDeckName);
+    setDeckId(deck.id);
+    setNewDeckName('');
+    return deck.id;
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const deckName = (id: string) => store.decks.find((d) => d.id === id)?.name ?? 'your deck';
 
+  const submitSingle = (e: { preventDefault: () => void }) => {
+    e.preventDefault();
+    if (!question.trim() || !answer.trim()) return;
+    const target = resolveDeck();
+    if (!target) return;
+    store.addCards([{ question, answer }], target);
+    setQuestion('');
+    setAnswer('');
+    setAddedCount((n) => n + 1);
+    toast('Card added');
+    questionRef.current?.focus();
+  };
+
+  const saveMany = (cards: CardDraft[], reset: () => void) => {
+    const target = resolveDeck();
+    if (!target || cards.length === 0) return;
+    store.addCards(cards, target);
+    reset();
+    toast(`Added ${cards.length} cards to ${deckName(target)}`, {
+      action: { label: 'View deck', onClick: () => navigate({ name: 'deck', deckId: target }) },
+    });
+  };
+
+  const handleFile = async (file?: File) => {
+    if (!file) return;
     if (file.type !== 'application/pdf') {
-      alert('Please upload a PDF file.');
+      toast('That file isn\'t a PDF. Choose a .pdf file.', { tone: 'error' });
       return;
     }
-
+    setFileName(file.name);
+    setGenerated([]);
     setIsProcessing(true);
     try {
-      const text = await extractTextFromPDF(file);
-      setExtractedText(text);
+      setExtractedText(await extractTextFromPDF(file));
     } catch (error) {
       console.error('PDF parsing failed:', error);
-      alert('Failed to parse PDF. Please try again.');
+      toast('Couldn\'t read that PDF. It may be scanned images rather than text.', { tone: 'error' });
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleGenerate = async () => {
+  const generate = async () => {
     if (!extractedText.trim()) return;
-
     if (activeApiKey) {
       setIsGenerating(true);
       try {
         const cards = await generateFlashcardsWithAI(extractedText, { provider, apiKey: activeApiKey });
-        setGeneratedCards(cards);
-        if (cards.length === 0) {
-           alert("AI could not generate flashcards. Please check the text.");
-        }
+        setGenerated(cards);
+        if (cards.length === 0) toast(`${providerName} didn't find anything to make cards from.`, { tone: 'error' });
       } catch (error) {
-        alert(`Generation with ${provider} failed. Check your API Key.`);
+        console.error(error);
+        toast(`${providerName} couldn't generate cards. Check your API key in Settings.`, { tone: 'error' });
       } finally {
         setIsGenerating(false);
       }
     } else {
-      // Fallback to manual regex
       const cards = generateFlashcardsFromText(extractedText);
-      setGeneratedCards(cards);
+      setGenerated(cards);
       if (cards.length === 0) {
-          alert("Could not automatically detect standard flashcards. Please ensure the text has distinct questions and answers, or edit the text above. Tip: Add an AI API Key in Settings for smart generation!");
+        toast('No question and answer pairs found. Add an AI key in Settings for smarter generation.', { tone: 'error' });
       }
     }
   };
 
-  const saveAllGenerated = () => {
-    generatedCards.forEach((card, index) => {
-      addFlashcard({
-        ...card,
-        id: Date.now() + index, // Ensure unique IDs
-      });
-    });
-    setGeneratedCards([]);
-    setExtractedText('');
-    alert(`Successfully added ${generatedCards.length} flashcards!`);
-  };
-
   return (
-    <div className="add-flashcard-container">
-      <div className="header-actions" style={{display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem'}}>
-        <button className="btn-icon" onClick={() => setShowSettings(!showSettings)} title="AI Settings">
-          <Settings size={20} />
-        </button>
+    <div className="add-view">
+      <h1>Add cards</h1>
+
+      <div className="deck-picker">
+        <label className="field">
+          <span>Deck</span>
+          <select value={deckId} onChange={(e) => setDeckId(e.target.value)}>
+            {store.decks.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+            <option value={NEW_DECK}>New deck…</option>
+          </select>
+        </label>
+        {deckId === NEW_DECK && (
+          <label className="field">
+            <span>New deck name</span>
+            <input value={newDeckName} onChange={(e) => setNewDeckName(e.target.value)} placeholder="e.g. Spanish verbs" autoFocus />
+          </label>
+        )}
       </div>
 
-      {showSettings && (
-        <div className="settings-panel" style={{background: '#f8f9fa', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #e9ecef'}}>
-          <h4 style={{margin: '0 0 1rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
-            <BrainCircuit size={18} /> AI Configuration
-          </h4>
-          
-          <div className="form-group">
-            <label style={{fontSize: '0.9rem', marginBottom: '0.25rem'}}>Select Provider:</label>
-            <select 
-              value={provider} 
-              onChange={(e) => setProvider(e.target.value as AIProvider)}
-              style={{width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ced4da', marginBottom: '1rem'}}
-            >
-              <option value="gemini">Google Gemini (Recommended)</option>
-              <option value="claude">Anthropic Claude</option>
-            </select>
-          </div>
+      <div className="segmented" role="tablist" aria-label="How to add cards">
+        {([
+          ['single', PenLine, 'One card'],
+          ['list', List, 'Paste a list'],
+          ['pdf', FileText, 'From a PDF'],
+        ] as const).map(([m, Icon, label]) => (
+          <button key={m} role="tab" aria-selected={mode === m} className={mode === m ? 'active' : ''} onClick={() => setMode(m)}>
+            <Icon size={16} aria-hidden /> {label}
+          </button>
+        ))}
+      </div>
 
-          <div className="form-group">
-            <label style={{fontSize: '0.9rem', marginBottom: '0.25rem'}}>
-               <Key size={14} style={{display:'inline', verticalAlign:'middle'}}/> {provider === 'gemini' ? 'Gemini' : 'Claude'} API Key
+      {mode === 'single' && (
+        <form onSubmit={submitSingle} className="single-form">
+          <div className="index-card editor-card">
+            <label className="editor-side">
+              <span className="side-label">Front</span>
+              <textarea
+                ref={questionRef}
+                className="hand"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder="What is the powerhouse of the cell?"
+                rows={3}
+              />
             </label>
-            <input 
-              type="password" 
-              value={provider === 'gemini' ? geminiKey : claudeKey} 
-              onChange={(e) => provider === 'gemini' ? setGeminiKey(e.target.value) : setClaudeKey(e.target.value)} 
-              placeholder={`Paste your ${provider === 'gemini' ? 'Google' : 'Anthropic'} API Key`}
-              style={{width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ced4da'}}
-            />
-            <p style={{fontSize: '0.8rem', color: '#6c757d', marginTop: '0.25rem'}}>
-              {provider === 'gemini' 
-                ? <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{color: '#6366f1'}}>Get Gemini Key</a>
-                : <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer" style={{color: '#6366f1'}}>Get Claude Key</a>
-              }
-            </p>
+            <label className="editor-side back">
+              <span className="side-label">Back</span>
+              <textarea
+                className="hand"
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                placeholder="The mitochondria"
+                rows={3}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitSingle(e);
+                }}
+              />
+            </label>
           </div>
+          <div className="form-foot">
+            <span className="muted small">{addedCount > 0 ? `${addedCount} added this session` : 'Tip: Ctrl + Enter adds the card'}</span>
+            <button type="submit" className="btn btn-primary" disabled={!question.trim() || !answer.trim()}>
+              Add card
+            </button>
+          </div>
+        </form>
+      )}
+
+      {mode === 'list' && (
+        <div className="list-mode">
+          <label className="field">
+            <span>One card per line, with the question and answer separated by | or a tab</span>
+            <textarea
+              value={listText}
+              onChange={(e) => setListText(e.target.value)}
+              rows={8}
+              placeholder={'Capital of Japan | Tokyo\nH2O | Water\nPhotosynthesis - How plants turn light into energy'}
+            />
+          </label>
+          {listCards.length > 0 && (
+            <>
+              <h2 className="preview-title">{listCards.length} cards found</h2>
+              <Preview cards={listCards} onRemove={(i) => setListText(listText.split('\n').filter((l) => l.trim()).filter((_, j) => j !== i).join('\n'))} />
+            </>
+          )}
+          <button className="btn btn-primary" disabled={listCards.length === 0} onClick={() => saveMany(listCards, () => setListText(''))}>
+            Add {listCards.length || ''} cards
+          </button>
         </div>
       )}
 
-      <div className="tabs">
-        <button 
-          className={`tab-btn ${mode === 'manual' ? 'active' : ''}`} 
-          onClick={() => setMode('manual')}
-        >
-          <Plus size={16} /> Manual Entry
-        </button>
-        <button 
-          className={`tab-btn ${mode === 'pdf' ? 'active' : ''}`} 
-          onClick={() => setMode('pdf')}
-        >
-          <FileText size={16} /> PDF Upload
-        </button>
-      </div>
+      {mode === 'pdf' && (
+        <div className="pdf-mode">
+          <label
+            className="drop-zone"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              handleFile(e.dataTransfer.files?.[0]);
+            }}
+          >
+            {isProcessing ? <Loader className="spin" size={28} /> : <Upload size={28} />}
+            <span>{isProcessing ? 'Reading PDF…' : fileName || 'Choose or drop a PDF of your notes'}</span>
+            <input type="file" accept="application/pdf" onChange={(e) => handleFile(e.target.files?.[0])} hidden />
+          </label>
 
-      {mode === 'manual' ? (
-        <form onSubmit={handleManualSubmit} className="manual-form">
-          <div className="form-group">
-            <label htmlFor="question">Question</label>
-            <textarea
-              id="question"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder="e.g. What is the capital of France?"
-              rows={3}
-            />
-          </div>
-          <div className="form-group">
-            <label htmlFor="answer">Answer</label>
-            <textarea
-              id="answer"
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              placeholder="e.g. Paris"
-              rows={3}
-            />
-          </div>
-          <button type="submit" className="submit-btn">Add Flashcard</button>
-        </form>
-      ) : (
-        <div className="pdf-upload-section">
-          <div className="file-input-wrapper">
-            <label htmlFor="pdf-upload" className="file-drop-zone">
-              <Upload size={32} />
-              <span>Click to upload PDF</span>
-              <input 
-                id="pdf-upload" 
-                type="file" 
-                accept="application/pdf" 
-                onChange={handleFileChange}
-                hidden
-              />
-            </label>
-          </div>
-
-          {isProcessing && (
-            <div className="loading-state">
-              <Loader className="spin" /> Processing PDF...
-            </div>
-          )}
+          <p className="muted small">
+            {activeApiKey ? (
+              <>
+                <Sparkles size={14} className="inline-icon" /> {providerName} will write the cards for you.
+              </>
+            ) : (
+              <>
+                Without an AI key, only text already laid out as "term - definition" becomes cards.{' '}
+                <button className="link-btn" onClick={() => navigate({ name: 'settings' })}>Add a key in Settings</button>
+              </>
+            )}
+          </p>
 
           {extractedText && (
-            <div className="extraction-area">
-              <h3>Extracted Text</h3>
-              {!activeApiKey && <p className="hint-text">No API Key detected for {provider}. Using basic text splitting.</p>}
-              {activeApiKey && <p className="hint-text" style={{color: '#6366f1', fontWeight: 500}}> <Sparkles size={14} style={{display:'inline', verticalAlign:'middle'}}/> AI Ready ({provider})</p>}
-              
-              <textarea 
-                value={extractedText} 
-                onChange={(e) => setExtractedText(e.target.value)}
-                rows={10}
-                className="extracted-text-input"
-              />
-              <button onClick={handleGenerate} className="action-btn" disabled={isGenerating}>
+            <>
+              <label className="field">
+                <span>Text from {fileName} (edit it before generating if you like)</span>
+                <textarea value={extractedText} onChange={(e) => setExtractedText(e.target.value)} rows={8} />
+              </label>
+              <button className="btn btn-secondary" onClick={generate} disabled={isGenerating}>
                 {isGenerating ? (
-                   <span style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'}}>
-                     <Loader className="spin" size={18} /> Generating with {provider}...
-                   </span>
+                  <>
+                    <Loader className="spin" size={16} /> Writing cards with {providerName}…
+                  </>
+                ) : activeApiKey ? (
+                  <>
+                    <Sparkles size={16} /> Generate with {providerName}
+                  </>
                 ) : (
-                   activeApiKey ? `Generate with ${provider === 'gemini' ? 'Gemini' : 'Claude'}` : "Generate Flashcards (Basic)"
+                  'Generate cards'
                 )}
               </button>
-            </div>
+            </>
           )}
 
-          {generatedCards.length > 0 && (
-            <div className="preview-area">
-              <h3>Preview ({generatedCards.length})</h3>
-              <div className="preview-list">
-                {generatedCards.map((card, i) => (
-                  <div key={i} className="preview-card">
-                    <p><strong>Q:</strong> {card.question}</p>
-                    <p><strong>A:</strong> {card.answer}</p>
-                  </div>
-                ))}
-              </div>
-              <button onClick={saveAllGenerated} className="submit-btn">
-                Save All Flashcards
+          {generated.length > 0 && (
+            <>
+              <h2 className="preview-title">{generated.length} cards ready. Remove any you don't want.</h2>
+              <Preview cards={generated} onRemove={(i) => setGenerated(generated.filter((_, j) => j !== i))} />
+              <button
+                className="btn btn-primary"
+                onClick={() =>
+                  saveMany(generated, () => {
+                    setGenerated([]);
+                    setExtractedText('');
+                    setFileName('');
+                  })
+                }
+              >
+                Add {generated.length} cards
               </button>
-            </div>
+            </>
           )}
         </div>
       )}
