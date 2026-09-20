@@ -1,43 +1,38 @@
-import { Flashcard } from '../models/flashCard';
+import { CardDraft } from '../models/flashCard';
 
-export const generateFlashcardsFromText = (text: string): Omit<Flashcard, 'id'>[] => {
-  // Simple heuristic: 
-  // 1. Split by double newlines to find potential blocks.
-  // 2. If a line contains a separator like " - " or ":", split into Q and A.
-  // 3. Else, if we have a block, try to split first sentence as Q, rest as A.
-  
+/** Parse one card per line: "question | answer", "question<TAB>answer" or "term - definition". */
+export const parseCardList = (text: string): CardDraft[] =>
+  text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^(.+?)\s*(?:\||\t|\s[-–—:]\s)\s*(.+)$/);
+      return m ? { question: m[1].trim(), answer: m[2].trim() } : null;
+    })
+    .filter((c): c is CardDraft => !!c);
+
+/** Heuristic generator for free text (used when no AI key is set). */
+export const generateFlashcardsFromText = (text: string): CardDraft[] => {
   const blocks = text.split(/\n\s*\n/);
-  const potentialCards: Omit<Flashcard, 'id'>[] = [];
+  const cards: CardDraft[] = [];
 
   for (const block of blocks) {
-    const cleanBlock = block.trim();
-    if (!cleanBlock) continue;
+    const clean = block.trim();
+    if (!clean) continue;
 
-    // Pattern 1: "Term - Definition" or "Term: Definition"
-    const separatorMatch = cleanBlock.match(/^(.+?)(?:\s+[-–—:]\s+)(.+)$/s);
-    if (separatorMatch) {
-      potentialCards.push({
-        question: separatorMatch[1].trim(),
-        answer: separatorMatch[2].trim(),
-      });
+    const sep = clean.match(/^(.+?)(?:\s+[-–—:]\s+)(.+)$/s);
+    if (sep) {
+      cards.push({ question: sep[1].trim(), answer: sep[2].trim() });
       continue;
     }
 
-    // Pattern 2: Multiline. First line is Q, rest is A.
-    const lines = cleanBlock.split('\n');
+    const lines = clean.split('\n');
     if (lines.length > 1) {
-        const q = lines[0].trim();
-        const a = lines.slice(1).join('\n').trim();
-        if (q && a) {
-            potentialCards.push({ question: q, answer: a });
-            continue;
-        }
+      const q = lines[0].trim();
+      const a = lines.slice(1).join('\n').trim();
+      if (q && a) cards.push({ question: q, answer: a });
     }
-    
-    // Fallback: Just put the text in Question (user edits later)
-    // or try sentence splitting?
-    // Let's just ignore single lines that don't match pattern 1 to avoid garbage.
   }
-
-  return potentialCards;
+  return cards;
 };
